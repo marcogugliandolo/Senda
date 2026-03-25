@@ -242,6 +242,36 @@ export default function App() {
     splitAmong: [] as string[]
   });
 
+  const isApiKeyMissing = !process.env.GEMINI_API_KEY;
+
+  const generateDemoTrip = () => {
+    const demoData = {
+      itinerary: [
+        {
+          day: 1,
+          date: "Día 1",
+          activities: [
+            { id: '1', time: "10:00", activity: "Llegada y Check-in", cost: 0, isFree: true, location: trip.destination, notes: "Bienvenidos a vuestra aventura." },
+            { id: '2', time: "13:00", activity: "Almuerzo de Bienvenida", cost: 25, isFree: false, location: "Centro Ciudad", notes: "Probando la gastronomía local." },
+            { id: '3', time: "16:00", activity: "Tour Panorámico", cost: 0, isFree: true, location: "Mirador Principal", isHiddenGem: true, gemInfo: { name: "Mirador Secreto", rating: 4.9, reviewSummary: "Vistas increíbles sin multitudes.", mapsUrl: "#", costEstimate: "Gratis" } }
+          ]
+        }
+      ],
+      financials: {
+        totalEstimated: 150,
+        perPerson: trip.participants.map(p => ({ name: p.name, amount: p.budget, spent: 0, balance: p.budget, status: 'within' as const })),
+        suggestions: ["Aprovechad las horas doradas para fotos.", "Reservad con antelación los restaurantes populares."],
+        compromiseProposals: [{ conflict: "Presupuestos variados", proposal: "Alternar cenas de lujo con picnics escénicos.", savings: "40€/persona" }]
+      },
+      conciergeMessage: "¡Hola! Como no hay una clave de API configurada, he generado este itinerario de demostración para que veas cómo funciona Senda. ¡Configura tu clave para planes reales!"
+    };
+
+    setItinerary(demoData.itinerary);
+    setFinancials(demoData.financials);
+    setChatMessages([{ role: 'model', text: demoData.conciergeMessage }]);
+    setStep('dashboard');
+  };
+
   // --- Logic ---
 
   const handleEditActivity = (dayIndex: number, actIndex: number) => {
@@ -400,7 +430,13 @@ export default function App() {
 
     setLoading(true);
     try {
-      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
+      const apiKey = process.env.GEMINI_API_KEY;
+      if (!apiKey) {
+        // Fallback to demo if no API key
+        generateDemoTrip();
+        return;
+      }
+      const ai = new GoogleGenAI({ apiKey });
       const prompt = `Planifica un viaje a ${trip.destination} del ${trip.startDate} al ${trip.endDate}.
       Participantes y sus presupuestos individuales:
       ${trip.participants.map(p => `- ${p.name}: ${p.budget}€`).join('\n')}
@@ -464,7 +500,11 @@ export default function App() {
       setStep('dashboard');
     } catch (error: any) {
       console.error('Error generating trip:', error);
-      alert('Hubo un error al generar el viaje. Inténtalo de nuevo.');
+      if (error.message === 'API_KEY_MISSING') {
+        alert('Falta la clave de API de Gemini. Por favor, configúrala en el menú de Ajustes > API Keys de AI Studio.');
+      } else {
+        alert('Hubo un error al generar el viaje. Inténtalo de nuevo.');
+      }
     } finally {
       setLoading(false);
     }
@@ -479,7 +519,12 @@ export default function App() {
     setLoading(true);
 
     try {
-      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
+      const apiKey = process.env.GEMINI_API_KEY;
+      if (!apiKey) {
+        setChatMessages(prev => [...prev, { role: 'model', text: '¡Hola! Estoy en modo demo porque no hay una clave de API configurada. Puedo responderte de forma básica: ¡Tu viaje a ' + trip.destination + ' tiene una pinta increíble!' }]);
+        return;
+      }
+      const ai = new GoogleGenAI({ apiKey });
       const chat = ai.chats.create({
         model: "gemini-3-flash-preview",
         config: { 
@@ -495,6 +540,9 @@ export default function App() {
       setChatMessages(prev => [...prev, { role: 'model', text: response.text || 'No pude procesar eso.' }]);
     } catch (error: any) {
       console.error('Chat error:', error);
+      if (error.message === 'API_KEY_MISSING') {
+        setChatMessages(prev => [...prev, { role: 'model', text: '⚠️ Falta la clave de API de Gemini. Configúrala en Ajustes > API Keys.' }]);
+      }
     } finally {
       setLoading(false);
     }
@@ -502,67 +550,79 @@ export default function App() {
 
   // --- Views ---
 
-  if (step === 'landing') {
-    return (
-      <div className="min-h-screen flex flex-col lg:flex-row font-sans bg-white">
-        {/* Left Content */}
-        <div className="flex-1 flex flex-col justify-center px-8 lg:px-24 py-16 lg:py-0 z-10 bg-white">
-          <div className="inline-flex items-center gap-2 px-4 py-2 bg-slate-100 rounded-full mb-8 w-max">
-            <Sparkles className="text-slate-900 w-4 h-4" />
-            <span className="text-[10px] font-bold text-slate-900 uppercase tracking-[0.2em]">Senda AI Travel</span>
-          </div>
-          
-          <h1 className="text-6xl sm:text-7xl lg:text-9xl font-bold tracking-tighter text-slate-900 mb-6 leading-[0.9]">
-            Senda.
-          </h1>
-          
-          <p className="text-xl lg:text-2xl text-slate-500 mb-12 font-medium leading-relaxed max-w-xl">
-            El camino inteligente para viajar en grupo. Planifica, media y gestiona finanzas con precisión algorítmica.
-          </p>
-          
-          <div className="flex flex-col sm:flex-row items-center gap-4">
-            <button 
-              onClick={() => setStep('profiling')}
-              className="w-full sm:w-auto px-10 py-5 bg-slate-900 text-white rounded-full font-bold hover:bg-slate-800 transition-all duration-300 flex items-center justify-center gap-2 shadow-2xl shadow-slate-900/20"
-            >
-              Comenzar Ruta <ChevronRight className="w-5 h-5" />
-            </button>
-            <button className="w-full sm:w-auto px-10 py-5 bg-white text-slate-900 border border-slate-200 rounded-full font-bold hover:bg-slate-50 transition-all">
-              Ver Demo
-            </button>
-          </div>
+  return (
+    <div className="min-h-screen bg-white font-sans">
+      {isApiKeyMissing && (
+        <div className="bg-amber-50 border-b border-amber-100 px-4 py-2 flex items-center justify-center gap-2 text-amber-800 text-xs font-medium sticky top-0 z-[100]">
+          <AlertCircle className="w-3.5 h-3.5" />
+          <span>Falta la clave de API de Gemini. Configúrala en Ajustes {'>'} API Keys para que la IA funcione.</span>
         </div>
+      )}
 
-        {/* Right Image */}
-        <div className="flex-1 relative hidden lg:block p-4">
-          <div className="w-full h-full rounded-[2.5rem] overflow-hidden relative">
-            <img 
-              src="https://images.unsplash.com/photo-1469854523086-cc02fe5d8800?auto=format&fit=crop&q=80&w=2021" 
-              alt="Travel" 
-              className="w-full h-full object-cover"
-              referrerPolicy="no-referrer"
-            />
-            <div className="absolute inset-0 bg-gradient-to-t from-slate-900/40 to-transparent" />
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  if (step === 'profiling') {
-    return (
-      <div className="min-h-screen bg-white p-6 md:p-12 font-sans">
-        <AnimatePresence>
-          {loading && <LoadingOverlay />}
-        </AnimatePresence>
-        <div className="max-w-5xl mx-auto">
-          <header className="flex items-center justify-between mb-16">
-            <div className="flex items-center gap-3">
-              <div className="w-12 h-12 bg-slate-900 rounded-2xl flex items-center justify-center shadow-lg shadow-slate-200">
-                <Plane className="text-white w-6 h-6" />
-              </div>
-              <h2 className="text-2xl font-bold tracking-tight text-slate-900">Senda</h2>
+      {step === 'landing' && (
+        <div className="min-h-screen flex flex-col lg:flex-row bg-white">
+          {/* Left Content */}
+          <div className="flex-1 flex flex-col justify-center px-8 lg:px-24 py-16 lg:py-0 z-10 bg-white">
+            <div className="inline-flex items-center gap-2 px-4 py-2 bg-slate-100 rounded-full mb-8 w-max">
+              <Sparkles className="text-slate-900 w-4 h-4" />
+              <span className="text-[10px] font-bold text-slate-900 uppercase tracking-[0.2em]">Senda AI Travel</span>
             </div>
+            
+            <h1 className="text-6xl sm:text-7xl lg:text-9xl font-bold tracking-tighter text-slate-900 mb-6 leading-[0.9]">
+              Senda.
+            </h1>
+            
+            <p className="text-xl lg:text-2xl text-slate-500 mb-12 font-medium leading-relaxed max-w-xl">
+              El camino inteligente para viajar en grupo. Planifica, media y gestiona finanzas con precisión algorítmica.
+            </p>
+            
+            <div className="flex flex-col sm:flex-row items-center gap-4">
+              <button 
+                onClick={() => setStep('profiling')}
+                className="w-full sm:w-auto px-10 py-5 bg-slate-900 text-white rounded-full font-bold hover:bg-slate-800 transition-all duration-300 flex items-center justify-center gap-2 shadow-2xl shadow-slate-900/20"
+              >
+                Comenzar Ruta <ChevronRight className="w-5 h-5" />
+              </button>
+              <button 
+                onClick={() => {
+                  setTrip(prev => ({ ...prev, destination: 'París' }));
+                  generateDemoTrip();
+                }}
+                className="w-full sm:w-auto px-10 py-5 bg-white text-slate-900 border border-slate-200 rounded-full font-bold hover:bg-slate-50 transition-all"
+              >
+                Ver Demo
+              </button>
+            </div>
+          </div>
+
+          {/* Right Image */}
+          <div className="flex-1 relative hidden lg:block p-4">
+            <div className="w-full h-full rounded-[2.5rem] overflow-hidden relative">
+              <img 
+                src="https://images.unsplash.com/photo-1469854523086-cc02fe5d8800?auto=format&fit=crop&q=80&w=2021" 
+                alt="Travel" 
+                className="w-full h-full object-cover"
+                referrerPolicy="no-referrer"
+              />
+              <div className="absolute inset-0 bg-gradient-to-t from-slate-900/40 to-transparent" />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {step === 'profiling' && (
+        <div className="min-h-screen bg-white p-6 md:p-12 font-sans">
+          <AnimatePresence>
+            {loading && <LoadingOverlay />}
+          </AnimatePresence>
+          <div className="max-w-5xl mx-auto">
+            <header className="flex items-center justify-between mb-16">
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 bg-slate-900 rounded-2xl flex items-center justify-center shadow-lg shadow-slate-200">
+                  <Plane className="text-white w-6 h-6" />
+                </div>
+                <h2 className="text-2xl font-bold tracking-tight text-slate-900">Senda</h2>
+              </div>
             <button onClick={() => setStep('landing')} className="text-xs font-bold text-slate-400 hover:text-slate-900 transition-all uppercase tracking-[0.2em] px-4 py-2 rounded-full hover:bg-slate-50">
               Cancelar
             </button>
@@ -687,19 +747,21 @@ export default function App() {
           </div>
         </div>
       </div>
-    );
-  }
+      )}
 
-  return (
-    <div className="min-h-screen bg-[#F9FAFB] flex flex-col md:flex-row font-sans text-slate-900">
-      {/* Sidebar - Navigation */}
-      <aside className="w-full md:w-72 bg-white border-b md:border-b-0 md:border-r border-slate-100 flex flex-col md:sticky top-0 md:h-screen z-40">
+      {step === 'dashboard' && (
+        <div className="min-h-screen bg-[#F9FAFB] flex flex-col md:flex-row font-sans text-slate-900">
+          {/* Sidebar - Navigation */}
+          <aside className="w-full md:w-72 bg-white border-b md:border-b-0 md:border-r border-slate-100 flex flex-col md:sticky top-0 md:h-screen z-40">
         <div className="p-6 md:p-8 md:pb-12 flex items-center justify-between md:justify-start gap-3">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 bg-slate-900 rounded-xl flex items-center justify-center shadow-lg shadow-slate-200">
               <Plane className="text-white w-5 h-5" />
             </div>
             <h1 className="text-2xl font-bold tracking-tight text-slate-900">Senda</h1>
+            {isApiKeyMissing && (
+              <span className="bg-amber-100 text-amber-700 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider">Demo</span>
+            )}
           </div>
         </div>
 
@@ -1295,6 +1357,8 @@ export default function App() {
 
         </div>
       </main>
+      </div>
+      )}
     </div>
   );
 }
