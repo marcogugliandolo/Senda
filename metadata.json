@@ -1,0 +1,7 @@
+{
+  "name": "Senda: Viajes Grupales Inteligentes",
+  "description": "IA para planificar, mediar y gestionar las finanzas de viajes grupales sin estrés. Itinerarios inteligentes, joyas ocultas y control de gastos.",
+  "requestFramePermissions": [
+    "geolocation"
+  ]
+}
