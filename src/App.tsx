@@ -23,11 +23,21 @@ import {
   Users,
   Edit2,
   Save,
-  X
+  X,
+  Key
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
+
+declare global {
+  interface Window {
+    aistudio?: {
+      hasSelectedApiKey: () => Promise<boolean>;
+      openSelectKey: () => Promise<void>;
+    };
+  }
+}
 import { DayPicker } from 'react-day-picker';
 import 'react-day-picker/dist/style.css';
 import * as Popover from '@radix-ui/react-popover';
@@ -82,6 +92,7 @@ interface TripDetails {
 }
 
 interface Activity {
+  id?: string;
   time: string;
   activity: string;
   cost: number;
@@ -117,22 +128,22 @@ interface FinancialBreakdown {
 
 // --- AI Service ---
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
+// --- Initialization ---
 
 const SYSTEM_INSTRUCTION = `Eres "Senda", una IA de élite diseñada para la planificación, mediación y gestión financiera de viajes grupales complejos. Tu objetivo es eliminar el estrés de la planificación y las discusiones por dinero, creando experiencias memorables y equilibradas.
 
 CAPACIDADES CRÍTICAS:
-1. Google Search: Úsalo SIEMPRE para verificar precios actuales, horarios y valoraciones de Google Maps.
+1. Google Search: Úsalo para verificar precios actuales, horarios y valoraciones.
 2. Cálculos exactos: Realiza desgloses financieros precisos, división de gastos y proyecciones.
 3. Razonamiento Psicológico & Mediación: 
    - Media entre presupuestos dispares buscando el "Punto de Equilibrio de Felicidad".
-   - Función "Compromiso": Si hay conflicto (ej. uno quiere hotel de 5* y otro hostal), propón una alternativa equilibrada (ej. un hotel boutique de 4* con alta valoración pero precio moderado).
+   - Función "Compromiso": Si hay conflicto (ej. uno quiere hotel de 5* y otro hostal), propón una alternativa equilibrada.
 
 REGLAS DE ORO:
 - Ajusta el itinerario al presupuesto más bajo del grupo para evitar exclusión.
 - Combina actividades gratuitas con experiencias de pago estratégicas.
-- Para "Joyas Ocultas": Incluye siempre rating de Maps, resumen de reseñas y link (simulado o real si es posible).
-- Formato: Siempre responde en español. Usa tablas para itinerarios.`;
+- Para "Joyas Ocultas": Incluye siempre rating de Maps, resumen de reseñas y link.
+- Formato: Siempre responde en español. Responde ÚNICAMENTE con el objeto JSON solicitado, sin texto adicional ni tablas fuera del JSON.`;
 
 // --- Components ---
 
@@ -175,6 +186,46 @@ function DatePicker({ date, setDate, placeholder }: { date: string, setDate: (d:
   );
 }
 
+const LoadingOverlay = () => {
+  return (
+    <motion.div 
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-slate-900 text-white overflow-hidden"
+    >
+      <div className="absolute inset-0 opacity-20 bg-[radial-gradient(circle_at_50%_50%,_#ffffff_0%,_transparent_60%)]" />
+      
+      <motion.div
+        animate={{ 
+          rotate: 360,
+          scale: [1, 1.1, 1],
+        }}
+        transition={{ 
+          rotate: { duration: 3, repeat: Infinity, ease: "linear" },
+          scale: { duration: 2, repeat: Infinity, ease: "easeInOut" }
+        }}
+        className="relative w-32 h-32 flex items-center justify-center mb-8"
+      >
+        <div className="absolute inset-0 border-2 border-dashed border-white/20 rounded-full" />
+        <Plane className="w-12 h-12 text-white -rotate-45" />
+      </motion.div>
+
+      <motion.h2 
+        animate={{ opacity: [0.5, 1, 0.5] }}
+        transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
+        className="text-3xl font-bold tracking-tight mb-4 z-10"
+      >
+        Diseñando tu experiencia...
+      </motion.h2>
+      
+      <p className="text-slate-400 font-medium text-sm z-10">
+        Senda está trazando la ruta perfecta para tu grupo
+      </p>
+    </motion.div>
+  );
+};
+
 export default function App() {
   const [step, setStep] = useState<'landing' | 'profiling' | 'dashboard'>('landing');
   const [activeTab, setActiveTab] = useState<'itinerary' | 'finances' | 'chat'>('itinerary');
@@ -199,6 +250,25 @@ export default function App() {
     paidBy: '',
     splitAmong: [] as string[]
   });
+
+  const [hasApiKey, setHasApiKey] = useState(true);
+
+  useEffect(() => {
+    const checkKey = async () => {
+      if (window.aistudio?.hasSelectedApiKey) {
+        const selected = await window.aistudio.hasSelectedApiKey();
+        setHasApiKey(selected);
+      }
+    };
+    checkKey();
+  }, []);
+
+  const handleSelectKey = async () => {
+    if (window.aistudio?.openSelectKey) {
+      await window.aistudio.openSelectKey();
+      setHasApiKey(true);
+    }
+  };
 
   // --- Logic ---
 
@@ -237,6 +307,7 @@ export default function App() {
     setItinerary(prev => {
       const newItinerary = [...prev];
       newItinerary[dayIndex].activities.push({
+        id: Math.random().toString(36).substr(2, 9),
         time: '12:00',
         activity: 'Nueva Actividad',
         cost: 0,
@@ -357,6 +428,7 @@ export default function App() {
 
     setLoading(true);
     try {
+      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
       const prompt = `Planifica un viaje a ${trip.destination} del ${trip.startDate} al ${trip.endDate}.
       Participantes y sus presupuestos individuales:
       ${trip.participants.map(p => `- ${p.name}: ${p.budget}€`).join('\n')}
@@ -396,18 +468,36 @@ export default function App() {
         contents: prompt,
         config: {
           systemInstruction: SYSTEM_INSTRUCTION,
-          responseMimeType: "application/json"
+          responseMimeType: "application/json",
+          maxOutputTokens: 8192
         }
       });
 
-      const data = JSON.parse(response.text || '{}');
-      setItinerary(data.itinerary || []);
+      let jsonText = response.text || '{}';
+      // Clean markdown if present
+      if (jsonText.includes('```json')) {
+        jsonText = jsonText.split('```json')[1].split('```')[0];
+      } else if (jsonText.includes('```')) {
+        jsonText = jsonText.split('```')[1].split('```')[0];
+      }
+      
+      const data = JSON.parse(jsonText.trim());
+      const itineraryWithIds = (data.itinerary || []).map((day: any) => ({
+        ...day,
+        activities: day.activities.map((act: any) => ({ ...act, id: Math.random().toString(36).substr(2, 9) }))
+      }));
+      setItinerary(itineraryWithIds);
       setFinancials(data.financials || null);
       setChatMessages([{ role: 'model', text: data.conciergeMessage || '¡Hola! He preparado el viaje perfecto para vuestro grupo.' }]);
       setStep('dashboard');
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error generating trip:', error);
-      alert('Hubo un error al generar el viaje. Inténtalo de nuevo.');
+      if (error?.message?.includes('Requested entity was not found')) {
+        setHasApiKey(false);
+        alert('Tu clave de API parece no ser válida o no tener acceso a este modelo. Por favor, selecciona una clave válida.');
+      } else {
+        alert('Hubo un error al generar el viaje. Inténtalo de nuevo.');
+      }
     } finally {
       setLoading(false);
     }
@@ -422,9 +512,13 @@ export default function App() {
     setLoading(true);
 
     try {
+      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
       const chat = ai.chats.create({
         model: "gemini-3-flash-preview",
-        config: { systemInstruction: SYSTEM_INSTRUCTION }
+        config: { 
+          systemInstruction: SYSTEM_INSTRUCTION,
+          maxOutputTokens: 8192
+        }
       });
 
       // Include context of current trip
@@ -432,14 +526,42 @@ export default function App() {
       
       const response = await chat.sendMessage({ message: `${context}\n\nUsuario dice: ${inputMessage}` });
       setChatMessages(prev => [...prev, { role: 'model', text: response.text || 'No pude procesar eso.' }]);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Chat error:', error);
+      if (error?.message?.includes('Requested entity was not found')) {
+        setHasApiKey(false);
+      }
     } finally {
       setLoading(false);
     }
   };
 
   // --- Views ---
+
+  if (!hasApiKey) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50 p-6 font-sans">
+        <div className="max-w-md w-full bg-white p-10 rounded-[2.5rem] shadow-2xl text-center border border-slate-100">
+          <div className="w-20 h-20 bg-slate-900 rounded-3xl flex items-center justify-center mx-auto mb-8 shadow-xl shadow-slate-200">
+            <Key className="text-white w-10 h-10" />
+          </div>
+          <h2 className="text-3xl font-bold tracking-tight text-slate-900 mb-4">Activa Senda</h2>
+          <p className="text-slate-500 mb-8 leading-relaxed font-medium">
+            Para que Senda pueda trazar tus rutas y gestionar finanzas en el modo compartido, necesitas conectar tu propia clave de API.
+          </p>
+          <button 
+            onClick={handleSelectKey}
+            className="w-full py-5 bg-slate-900 text-white rounded-2xl font-bold hover:bg-slate-800 transition-all shadow-xl shadow-slate-200 flex items-center justify-center gap-2"
+          >
+            Configurar Clave API <ChevronRight className="w-5 h-5" />
+          </button>
+          <p className="mt-6 text-xs text-slate-400 font-medium">
+            ¿No tienes una? Consíguela en <a href="https://ai.google.dev/gemini-api/docs/billing" target="_blank" className="text-slate-900 underline">Google AI Studio</a>
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   if (step === 'landing') {
     return (
@@ -451,7 +573,7 @@ export default function App() {
             <span className="text-[10px] font-bold text-slate-900 uppercase tracking-[0.2em]">Senda AI Travel</span>
           </div>
           
-          <h1 className="text-7xl lg:text-9xl font-bold tracking-tighter text-slate-900 mb-6 leading-[0.9]">
+          <h1 className="text-6xl sm:text-7xl lg:text-9xl font-bold tracking-tighter text-slate-900 mb-6 leading-[0.9]">
             Senda.
           </h1>
           
@@ -491,6 +613,9 @@ export default function App() {
   if (step === 'profiling') {
     return (
       <div className="min-h-screen bg-white p-6 md:p-12 font-sans">
+        <AnimatePresence>
+          {loading && <LoadingOverlay />}
+        </AnimatePresence>
         <div className="max-w-5xl mx-auto">
           <header className="flex items-center justify-between mb-16">
             <div className="flex items-center gap-3">
@@ -506,8 +631,8 @@ export default function App() {
           
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-16">
             <div className="lg:col-span-4">
-              <h3 className="text-4xl font-bold tracking-tighter text-slate-900 mb-6 leading-tight">Configura tu Ruta</h3>
-              <p className="text-slate-500 leading-relaxed font-medium">
+              <h3 className="text-3xl sm:text-4xl font-bold tracking-tighter text-slate-900 mb-6 leading-tight">Configura tu Ruta</h3>
+              <p className="text-slate-500 leading-relaxed font-medium text-sm sm:text-base">
                 Cuéntanos a dónde quieres ir y quiénes te acompañan. Nuestra IA se encargará de encontrar el equilibrio perfecto para todos.
               </p>
             </div>
@@ -692,7 +817,7 @@ export default function App() {
 
       {/* Main Content */}
       <main className="flex-1 overflow-y-auto h-screen scroll-smooth">
-        <div className="max-w-5xl mx-auto p-8 md:p-12 space-y-12">
+        <div className="max-w-5xl mx-auto p-4 md:p-12 space-y-8 md:space-y-12">
           
           {activeTab === 'itinerary' && (
             <motion.div 
@@ -702,7 +827,7 @@ export default function App() {
             >
               {/* Financial Summary Mini */}
               <section className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-                <div className="lg:col-span-2 bg-white p-8 rounded-[2.5rem] border border-slate-100 shadow-sm">
+                <div className="lg:col-span-2 bg-white p-6 md:p-8 rounded-[2.5rem] border border-slate-100 shadow-sm">
                   <div className="flex items-center justify-between mb-10">
                     <div>
                       <h3 className="text-2xl font-display font-bold tracking-tight text-slate-900">Estado de Presupuestos</h3>
@@ -745,7 +870,7 @@ export default function App() {
                   </div>
                 </div>
 
-                <div className="bg-slate-900 text-white p-10 rounded-[2.5rem] shadow-2xl flex flex-col justify-between relative overflow-hidden group">
+                <div className="bg-slate-900 text-white p-6 md:p-10 rounded-[2.5rem] shadow-2xl flex flex-col justify-between relative overflow-hidden group">
                   <div className="absolute top-0 right-0 p-8 opacity-10 group-hover:opacity-20 transition-opacity">
                     <Plane className="w-32 h-32 rotate-12" />
                   </div>
@@ -787,22 +912,38 @@ export default function App() {
                 
                 <div className="space-y-16">
                   {itinerary.map((day, dayIndex) => (
-                    <div key={day.day} className="relative pl-12">
+                    <motion.div 
+                      layout
+                      key={day.day} 
+                      initial={{ opacity: 0, y: 30 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ duration: 0.4, delay: dayIndex * 0.1 }}
+                      className="relative pl-8 sm:pl-12"
+                    >
                       <div className="absolute left-0 top-0 bottom-0 w-px bg-slate-200" />
                       <div className="absolute left-[-5px] top-2 w-[11px] h-[11px] rounded-full bg-slate-900 ring-4 ring-white shadow-sm" />
                       
-                      <div className="flex items-baseline gap-6 mb-8">
-                        <h4 className="text-4xl font-display font-bold tracking-tight text-slate-900">Día {day.day}</h4>
-                        <span className="text-slate-400 font-semibold tracking-tight">{day.date}</span>
+                      <div className="flex flex-col sm:flex-row sm:items-baseline gap-2 sm:gap-6 mb-8">
+                        <h4 className="text-3xl sm:text-4xl font-display font-bold tracking-tight text-slate-900">Día {day.day}</h4>
+                        <span className="text-slate-400 font-semibold tracking-tight text-sm sm:text-base">{day.date}</span>
                       </div>
 
                       <div className="grid grid-cols-1 gap-6">
-                        {day.activities.map((act, actIndex) => {
-                          const isEditing = editingActivity?.dayIndex === dayIndex && editingActivity?.actIndex === actIndex;
-                          
-                          return (
-                            <div key={actIndex} className="bg-white rounded-[2rem] border border-slate-100 shadow-sm hover:shadow-md hover:border-slate-200 transition-all duration-300 p-6 md:p-8 group">
-                              {isEditing && editForm ? (
+                        <AnimatePresence mode="popLayout">
+                          {day.activities.map((act, actIndex) => {
+                            const isEditing = editingActivity?.dayIndex === dayIndex && editingActivity?.actIndex === actIndex;
+                            
+                            return (
+                              <motion.div 
+                                layout
+                                initial={{ opacity: 0, scale: 0.95, y: 20 }}
+                                animate={{ opacity: 1, scale: 1, y: 0 }}
+                                exit={{ opacity: 0, scale: 0.95, y: -20 }}
+                                transition={{ duration: 0.2 }}
+                                key={act.id || actIndex} 
+                                className="bg-white rounded-[2rem] border border-slate-100 shadow-sm hover:shadow-md hover:border-slate-200 transition-all duration-300 p-6 md:p-8 group"
+                              >
+                                {isEditing && editForm ? (
                                 <div className="space-y-4">
                                   <div className="flex items-center justify-between mb-4">
                                     <h5 className="text-lg font-bold text-slate-900">Editar Actividad</h5>
@@ -821,19 +962,9 @@ export default function App() {
                                 </div>
                               ) : (
                                 <div className="flex flex-col md:flex-row gap-6 md:gap-8">
-                                  {/* Image */}
-                                  <div className="w-full md:w-48 h-48 md:h-auto rounded-2xl overflow-hidden shrink-0 relative bg-slate-100">
-                                    <img 
-                                      src={`https://picsum.photos/seed/${encodeURIComponent(act.location || act.activity)}/800/600`} 
-                                      alt={act.activity}
-                                      className="w-full h-full object-cover absolute inset-0"
-                                      referrerPolicy="no-referrer"
-                                    />
-                                  </div>
-                                  
                                   {/* Content */}
                                   <div className="flex-1 flex flex-col justify-center">
-                                    <div className="flex flex-col md:flex-row md:items-start justify-between gap-4">
+                                    <div className="flex flex-col md:flex-row md:items-start justify-between gap-6">
                                       <div className="flex gap-4 md:gap-6 items-start">
                                         <div className="text-xs font-mono font-bold text-slate-400 bg-slate-50 px-3 py-1.5 rounded-lg mt-1 shrink-0">{act.time}</div>
                                         <div>
@@ -855,8 +986,8 @@ export default function App() {
                                           )}
                                         </div>
                                       </div>
-                                      <div className="md:text-right shrink-0 flex flex-row md:flex-col items-center md:items-end justify-between md:justify-start gap-4 md:gap-0">
-                                        <div>
+                                      <div className="shrink-0 flex flex-row md:flex-col items-center md:items-end justify-between md:justify-start gap-4 md:gap-0">
+                                        <div className="md:text-right">
                                           <div className="text-2xl font-display font-bold tracking-tight text-slate-900">
                                             {act.isFree ? <span className="text-emerald-600">Gratis</span> : `${act.cost}€`}
                                           </div>
@@ -915,17 +1046,20 @@ export default function App() {
                                   </div>
                                 </div>
                               )}
-                            </div>
+                            </motion.div>
                           );
                         })}
-                        <button 
-                          onClick={() => handleAddActivity(dayIndex)}
-                          className="w-full py-6 border-2 border-dashed border-slate-200 rounded-[2rem] text-slate-400 font-bold hover:border-slate-400 hover:text-slate-600 transition-colors flex items-center justify-center gap-2"
-                        >
-                          <Plus className="w-5 h-5" /> Añadir Actividad
-                        </button>
+                        </AnimatePresence>
+                        <motion.div layout>
+                          <button 
+                            onClick={() => handleAddActivity(dayIndex)}
+                            className="w-full py-6 border-2 border-dashed border-slate-200 rounded-[2rem] text-slate-400 font-bold hover:border-slate-400 hover:text-slate-600 transition-colors flex items-center justify-center gap-2"
+                          >
+                            <Plus className="w-5 h-5" /> Añadir Actividad
+                          </button>
+                        </motion.div>
                       </div>
-                    </div>
+                    </motion.div>
                   ))}
                 </div>
               </section>
@@ -986,7 +1120,7 @@ export default function App() {
                   </div>
                   <div className="space-y-4">
                     {financials?.compromiseProposals.map((prop, i) => (
-                      <div key={i} className="bg-slate-900 text-white p-8 rounded-[2rem] shadow-xl relative overflow-hidden group">
+                      <div key={i} className="bg-slate-900 text-white p-6 md:p-8 rounded-[2rem] shadow-xl relative overflow-hidden group">
                         <div className="absolute top-0 right-0 p-6 opacity-5 group-hover:opacity-10 transition-opacity">
                           <AlertCircle className="w-20 h-20" />
                         </div>
@@ -1006,7 +1140,7 @@ export default function App() {
                       </div>
                     ))}
                     {(!financials?.compromiseProposals || financials.compromiseProposals.length === 0) && (
-                      <div className="bg-slate-50 p-12 rounded-[2rem] border border-dashed border-slate-200 text-center">
+                      <div className="bg-slate-50 p-8 md:p-12 rounded-[2rem] border border-dashed border-slate-200 text-center">
                         <div className="w-12 h-12 bg-white rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-sm">
                           <CheckCircle2 className="w-6 h-6 text-emerald-500" />
                         </div>
@@ -1017,7 +1151,7 @@ export default function App() {
                 </div>
               </section>
 
-              <section className="bg-white p-10 rounded-[2.5rem] border border-slate-100 shadow-sm">
+              <section className="bg-white p-6 md:p-10 rounded-[2.5rem] border border-slate-100 shadow-sm">
                 <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-10">
                   <div>
                     <h3 className="text-2xl font-display font-bold tracking-tight text-slate-900">Registro de Gastos</h3>
@@ -1039,7 +1173,7 @@ export default function App() {
                     <motion.div 
                       initial={{ scale: 0.9, opacity: 0 }}
                       animate={{ scale: 1, opacity: 1 }}
-                      className="bg-white w-full max-w-md rounded-3xl p-8 shadow-2xl"
+                      className="bg-white w-full max-w-md rounded-3xl p-6 md:p-8 shadow-2xl"
                     >
                       <h4 className="text-xl font-display font-bold tracking-tight mb-6">Nuevo Gasto</h4>
                       <div className="space-y-4">
@@ -1154,9 +1288,9 @@ export default function App() {
             <motion.section 
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
-              className="bg-white rounded-[2.5rem] border border-slate-100 shadow-2xl overflow-hidden flex flex-col h-[750px]"
+              className="bg-white rounded-[2.5rem] border border-slate-100 shadow-2xl overflow-hidden flex flex-col h-[calc(100vh-200px)] md:h-[750px]"
             >
-              <div className="p-8 border-b border-slate-50 flex items-center justify-between bg-slate-50/30">
+              <div className="p-4 md:p-8 border-b border-slate-50 flex items-center justify-between bg-slate-50/30">
                 <div className="flex items-center gap-4">
                   <div className="w-12 h-12 bg-slate-900 rounded-2xl flex items-center justify-center shadow-lg shadow-slate-200">
                     <Sparkles className="text-white w-6 h-6" />
@@ -1173,7 +1307,7 @@ export default function App() {
                 </div>
               </div>
 
-              <div className="flex-1 overflow-y-auto p-8 space-y-8 scroll-smooth">
+              <div className="flex-1 overflow-y-auto p-4 md:p-8 space-y-6 md:space-y-8 scroll-smooth">
                 {chatMessages.map((msg, i) => (
                   <div key={i} className={cn("flex", msg.role === 'user' ? "justify-end" : "justify-start")}>
                     <div className={cn(
@@ -1199,12 +1333,12 @@ export default function App() {
                 )}
               </div>
 
-              <div className="p-8 bg-slate-50/30 border-t border-slate-50">
-                <div className="flex gap-4">
+              <div className="p-4 md:p-8 bg-slate-50/30 border-t border-slate-50">
+                <div className="flex gap-2 md:gap-4">
                   <input 
                     type="text" 
                     placeholder="Escribe un mensaje..." 
-                    className="flex-1 px-8 py-4 bg-white border border-slate-100 rounded-[1.5rem] outline-none focus:ring-4 focus:ring-slate-100 transition-all shadow-sm text-sm font-medium"
+                    className="flex-1 px-6 md:px-8 py-4 bg-white border border-slate-100 rounded-[1.5rem] outline-none focus:ring-4 focus:ring-slate-100 transition-all shadow-sm text-sm font-medium"
                     value={inputMessage}
                     onChange={e => setInputMessage(e.target.value)}
                     onKeyPress={e => e.key === 'Enter' && sendMessage()}

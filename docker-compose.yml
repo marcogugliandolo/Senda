@@ -1,0 +1,41 @@
+version: '3.8'
+
+services:
+  senda-app:
+    image: node:20-slim
+    container_name: senda_app
+    working_dir: /app
+    ports:
+      - "3002:3000"  # IMPORTANTE: El puerto interno es 3000, el externo 3002
+    environment:
+      - NODE_ENV=production
+      - HOST=0.0.0.0
+      - PORT=3000
+      # Descomenta y añade tu API key de Gemini para que funcione la IA en producción:
+      # - GEMINI_API_KEY=tu_clave_aqui
+    restart: always
+    command: >
+      /bin/sh -c "
+      echo '--- INICIANDO DESPLIEGUE ---' &&
+      
+      echo '1. Instalando dependencias del sistema...' &&
+      apt-get update && apt-get install -y git python3 make g++ &&
+      
+      echo '2. Sincronizando código fuente...' &&
+      if [ ! -d '.git' ]; then
+        git init &&
+        # REEMPLAZA ESTA URL CON LA DE TU REPOSITORIO DE GITHUB PARA SENDA
+        git remote add origin https://github.com/marcogugliandolo/Senda_App.git;
+      fi &&
+      git fetch origin main &&
+      git reset --hard origin/main &&
+      
+      echo '3. Instalando dependencias de Node (incluyendo dev)...' &&
+      npm install --include=dev &&
+      
+      echo '4. Compilando aplicación...' &&
+      npm run build &&
+      
+      echo '5. Arrancando servidor...' &&
+      npx tsx server.ts
+      "
