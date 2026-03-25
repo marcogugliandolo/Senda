@@ -23,21 +23,12 @@ import {
   Users,
   Edit2,
   Save,
-  X,
-  Key
+  X
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 
-declare global {
-  interface Window {
-    aistudio?: {
-      hasSelectedApiKey: () => Promise<boolean>;
-      openSelectKey: () => Promise<void>;
-    };
-  }
-}
 import { DayPicker } from 'react-day-picker';
 import 'react-day-picker/dist/style.css';
 import * as Popover from '@radix-ui/react-popover';
@@ -250,25 +241,6 @@ export default function App() {
     paidBy: '',
     splitAmong: [] as string[]
   });
-
-  const [hasApiKey, setHasApiKey] = useState(true);
-
-  useEffect(() => {
-    const checkKey = async () => {
-      if (window.aistudio?.hasSelectedApiKey) {
-        const selected = await window.aistudio.hasSelectedApiKey();
-        setHasApiKey(selected);
-      }
-    };
-    checkKey();
-  }, []);
-
-  const handleSelectKey = async () => {
-    if (window.aistudio?.openSelectKey) {
-      await window.aistudio.openSelectKey();
-      setHasApiKey(true);
-    }
-  };
 
   // --- Logic ---
 
@@ -492,12 +464,7 @@ export default function App() {
       setStep('dashboard');
     } catch (error: any) {
       console.error('Error generating trip:', error);
-      if (error?.message?.includes('Requested entity was not found')) {
-        setHasApiKey(false);
-        alert('Tu clave de API parece no ser válida o no tener acceso a este modelo. Por favor, selecciona una clave válida.');
-      } else {
-        alert('Hubo un error al generar el viaje. Inténtalo de nuevo.');
-      }
+      alert('Hubo un error al generar el viaje. Inténtalo de nuevo.');
     } finally {
       setLoading(false);
     }
@@ -528,40 +495,12 @@ export default function App() {
       setChatMessages(prev => [...prev, { role: 'model', text: response.text || 'No pude procesar eso.' }]);
     } catch (error: any) {
       console.error('Chat error:', error);
-      if (error?.message?.includes('Requested entity was not found')) {
-        setHasApiKey(false);
-      }
     } finally {
       setLoading(false);
     }
   };
 
   // --- Views ---
-
-  if (!hasApiKey) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-50 p-6 font-sans">
-        <div className="max-w-md w-full bg-white p-10 rounded-[2.5rem] shadow-2xl text-center border border-slate-100">
-          <div className="w-20 h-20 bg-slate-900 rounded-3xl flex items-center justify-center mx-auto mb-8 shadow-xl shadow-slate-200">
-            <Key className="text-white w-10 h-10" />
-          </div>
-          <h2 className="text-3xl font-bold tracking-tight text-slate-900 mb-4">Activa Senda</h2>
-          <p className="text-slate-500 mb-8 leading-relaxed font-medium">
-            Para que Senda pueda trazar tus rutas y gestionar finanzas en el modo compartido, necesitas conectar tu propia clave de API.
-          </p>
-          <button 
-            onClick={handleSelectKey}
-            className="w-full py-5 bg-slate-900 text-white rounded-2xl font-bold hover:bg-slate-800 transition-all shadow-xl shadow-slate-200 flex items-center justify-center gap-2"
-          >
-            Configurar Clave API <ChevronRight className="w-5 h-5" />
-          </button>
-          <p className="mt-6 text-xs text-slate-400 font-medium">
-            ¿No tienes una? Consíguela en <a href="https://ai.google.dev/gemini-api/docs/billing" target="_blank" className="text-slate-900 underline">Google AI Studio</a>
-          </p>
-        </div>
-      </div>
-    );
-  }
 
   if (step === 'landing') {
     return (
